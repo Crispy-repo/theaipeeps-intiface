@@ -5,6 +5,9 @@ This repository contains a Tampermonkey userscript that integrates with [Buttplu
 # Affiliate Link:
 You can get your  The AI Peeps  account here at: [ The AI Peeps ](https://theaipeeps.com?fpr=the-ai-peeps-intiface-sync)
 
+## Screenshots
+![Options menu](options_menu.png?raw=true "Title")
+
 ## Features
 
 - **Device Scanning & Mapping**  
