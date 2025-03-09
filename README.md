@@ -83,8 +83,8 @@ Minimized:
    Click the **?** button in the top left corner of the control panel to toggle the documentation popup.
    
 9. **Preparing the Scenario:**  
-  For the best experience use something like this within the scenario to let the bot know what it should do:
-  - Every message needs to start with a number from 0 to 100. With this number you can control my toy. 0 is off and 100 means full power.
+  For the best experience use something like this within the scenario to let the bot know what it should do:  
+  "Every message needs to start with a number from 0 to 100. With this number you can control my toy. 0 is off and 100 means full power."  
   There you can also state how many toys you have connected and the name / usage. Feel free to experiment.
 
 ## License
