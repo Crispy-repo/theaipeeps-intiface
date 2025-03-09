@@ -3,7 +3,7 @@
 This repository contains a Tampermonkey userscript that integrates with [Buttplug.io] (https://buttplug.io/) Intiface. The script connects to an Intiface server via a fixed WebSocket URL (`ws://localhost:12345`), scans for connected devices (up to 4), and maps chat message numbers to individual devices so that vibration commands can be triggered in real time based on chat input.
 
 # Affiliate Link:
-You can get your  The AI Peeps  account here at [ The AI Peeps ](https://theaipeeps.com?fpr=the-ai-peeps-intiface-sync)
+You can get your  The AI Peeps  account here at: [ The AI Peeps ](https://theaipeeps.com?fpr=the-ai-peeps-intiface-sync)
 
 ## Features
 
