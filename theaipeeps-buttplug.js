@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         The Ai Peeps Intiface / Buttplug.IO
+// @name         The Ai Peeps Intiface / Buttplug.IO Sync
 // @namespace    http://tampermonkey.net/
 // @version      1.1
 // @description  Controls vibration based on chat messages with UI
@@ -316,7 +316,7 @@
     async function connectToIntiface() {
         const wsUrl = "ws://localhost:12345"; // fixed URL, ws/wss limitation
         try {
-            client = new Buttplug.ButtplugClient("The Ai Peeps Intiface");
+            client = new Buttplug.ButtplugClient("The Ai Peeps Intiface Sync");
             const connector = new Buttplug.ButtplugBrowserWebsocketClientConnector(wsUrl);
             await client.connect(connector);
             await client.startScanning();
