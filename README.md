@@ -6,10 +6,10 @@ This repository contains a Tampermonkey userscript that integrates with [Buttplu
 You can get your  The AI Peeps  account here at: [ The AI Peeps ](https://theaipeeps.com?fpr=the-ai-peeps-intiface-sync)
 
 ## Screenshots
-Options:
+Options:  
 ![Options menu](options_menu.png?raw=true "Options Menu")
 
-Minimized:
+Minimized:  
 ![Options menu](minimized.png?raw=true "Minimized")
 
 
