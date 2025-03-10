@@ -268,7 +268,7 @@
         }
     }
 
-    // Disconnect from Intiface.
+    // Disconnect from Intiface and clear mapping settings.
     async function disconnectFromIntiface() {
         if (client && isConnected) {
             try {
@@ -282,6 +282,15 @@
                     clearInterval(connectionCheckInterval);
                     connectionCheckInterval = null;
                 }
+                // Clear mapping UI and configuration.
+                document.getElementById("mapping-section").style.display = "none";
+                document.getElementById("mapping-settings").innerHTML = "";
+                mappingConfig = [];
+                lastSentValues = [];
+                oscillationTimers = [];
+                oscillationBases = [];
+                oscillationStartTime = [];
+                lastDeviceCommands = new Map();
             } catch (err) {
                 debugLog("Error disconnecting: " + err);
             }
@@ -313,7 +322,7 @@
         }
     }
 
-    // Log complete device information for debugging.
+    // Log complete device information.
     function logAllDevices() {
         if (client && client.devices) {
             client.devices.forEach((device, index) => {
@@ -520,7 +529,6 @@
             }
         }
         try {
-            // For each mapping row, send stop command (0 intensity for all motors of a device).
             mappingConfig.forEach(config => {
                 let motorCount = 1;
                 if (config.device._deviceInfo && config.device._deviceInfo.DeviceMessages && config.device._deviceInfo.DeviceMessages.ScalarCmd) {
@@ -630,23 +638,19 @@
             const chatIndex = mappingObj.mapping - 1;
             if (chatIndex < numberMatches.length) {
                 const newValue = parseInt(numberMatches[chatIndex], 10);
-                // If new value differs from the last value, update and clear any oscillation timer.
                 if (newValue !== lastSentValues[i]) {
                     lastSentValues[i] = newValue;
                     mappingObj.intensity = newValue / 100;
-                    // Clear any oscillation timer for this row.
                     if (oscillationTimers[i]) {
                         clearInterval(oscillationTimers[i]);
                         oscillationTimers[i] = null;
                     }
-                    // Immediately update aggregated command for this device.
                     updateAggregatedCommandForDevice(mappingObj.device);
                 } else {
-                    // Same value; if oscillation is enabled, start oscillation timer if not already started.
                     if (mappingObj.osc > 0) {
                         if (!oscillationTimers[i]) {
                             oscillationStartTime[i] = Date.now();
-                            oscillationBases[i] = mappingObj.intensity; // current base intensity (0-1)
+                            oscillationBases[i] = mappingObj.intensity;
                             oscillationTimers[i] = setInterval(() => {
                                 const frequency = 0.5; // Hz
                                 const t = (Date.now() - oscillationStartTime[i]) / 1000;
@@ -658,7 +662,6 @@
                             }, 175);
                         }
                     } else {
-                        // No oscillation setting; clear timer if exists.
                         if (oscillationTimers[i]) {
                             clearInterval(oscillationTimers[i]);
                             oscillationTimers[i] = null;
@@ -669,7 +672,7 @@
                 debugLog(`Mapping row ${i+1}: No corresponding number found in the message.`);
             }
         }
-        // Additionally, update aggregated commands for any devices that haven't been updated in this pass.
+        // Update aggregated commands for devices not updated in this pass.
         let updatedDevices = new Set();
         mappingConfig.forEach(config => {
             if (!updatedDevices.has(config.device)) {
