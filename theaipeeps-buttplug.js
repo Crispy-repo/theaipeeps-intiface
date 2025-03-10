@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         The Ai Peeps Intiface / Buttplug.IO Sync
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  Controls vibration based on chat messages with UI
+// @version      1.3
+// @description  Controls vibration based on chat messages with UI. Now supports devices with multiple motors by aggregating commands per device and only sending new commands if they differ.
 // @author       Crispy-repo
 // @match        https://www.theaipeeps.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=theaipeeps.com
@@ -17,45 +17,52 @@
     let client = null;
     let isConnected = false;
     let mappingStarted = false;
-    // mappingConfig is an array of objects: { mapping: number, osc: number }
+    // mappingConfig holds one object per mapping row: { mapping: number, osc: number, device: deviceObj, motor: number, intensity: number }
     let mappingConfig = [];
-    let lastSentValues = []; // Last chat value received for each device
-    // Oscillation variables: for each device, store the current oscillation timer, base value, and start time.
+    let lastSentValues = []; // per mapping row
+    // Oscillation variables (currently unused but left for potential future use)
     let oscillationTimers = [];
     let oscillationBases = [];
     let oscillationStartTime = [];
-    // Intervals for chat processing and connection checking.
+    // Intervals
     let mappingProcessingInterval = null;
     let connectionCheckInterval = null;
+    // New global map to store last command sent per device.
+    let lastDeviceCommands = new Map();
 
-    // Helper: round a number to 3 decimal places.
+    // Helper: round to 3 decimals.
     function roundTo3(num) {
         return Math.round(num * 1000) / 1000;
     }
 
-    // Debug log helper.
+    // Helper: compare two arrays for equality.
+    function arraysEqual(a, b) {
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) return false;
+        }
+        return true;
+    }
+
+    // Debug logger.
     function debugLog(message) {
         console.log(message);
     }
 
-    // Toggle the help/documentation popup.
+    // Toggle help/documentation popup.
     function toggleDocumentation() {
         const helpPanel = document.getElementById("help-panel");
-        if (!helpPanel.style.display || helpPanel.style.display === "none") {
-            helpPanel.style.display = "block";
-        } else {
-            helpPanel.style.display = "none";
-        }
+        helpPanel.style.display = (!helpPanel.style.display || helpPanel.style.display === "none") ? "block" : "none";
     }
 
-    // Create the help/documentation popup.
+    // Create help/documentation popup.
     function createHelpPanel() {
         const helpPanel = document.createElement("div");
         helpPanel.id = "help-panel";
         helpPanel.style.position = "fixed";
-        helpPanel.style.bottom = "calc(95px + 320px)"; // positioned above the UI; adjust if needed
+        helpPanel.style.bottom = "calc(95px + 320px)";
         helpPanel.style.right = "10px";
-        helpPanel.style.width = "400px"; // wider to match panel
+        helpPanel.style.width = "400px";
         helpPanel.style.background = "rgba(0,0,0,0.9)";
         helpPanel.style.color = "white";
         helpPanel.style.padding = "10px";
@@ -68,20 +75,19 @@
             <strong>Program Documentation</strong><br>
             This program connects to Intiface using the fixed URL <code>ws://localhost:12345</code> and scans for connected devices.<br><br>
             <em>Mapping Settings:</em><br>
-            - Use the dropdowns to assign which chat message number controls each device.<br>
-            - Under each device, adjust the slider (0–50) to set an oscillation percentage. For example, 10 means the device’s intensity will oscillate ±10% of the base value if no new value arrives.<br>
-            - The oscillated intensity is clamped between 0 and 100.<br><br>
+            - Use the dropdowns to assign which chat message number controls each motor of each device.<br>
+            - Under each mapping row, adjust the slider (0–50) to set an oscillation percentage (if desired). Only numbers from 0 to 100 are accepted.<br><br>
             <em>Connection:</em><br>
             - The toggle button shows a red dot with "Connect" when disconnected and a green dot with "Disconnect" when connected.<br><br>
             <em>Chat Processing:</em><br>
-            - The script reconstructs AI messages from split elements so numbers split across spans are captured.<br>
-            - Use the new checkbox to limit matching to numbers with a "v" prefix (e.g. v34) or all numbers.<br><br>
+            - The script reconstructs AI messages from split spans so that numbers split across elements are captured.<br>
+            - You can choose to match only numbers preceded by "v" (e.g. v34) using the checkbox below.<br><br>
             Click the "?" button again to close this help.
         `;
         document.body.appendChild(helpPanel);
     }
 
-    // Update the connection toggle button appearance.
+    // Update connection toggle button.
     function updateToggleButton() {
         const btn = document.getElementById("connect-btn");
         if (isConnected) {
@@ -91,7 +97,7 @@
         }
     }
 
-    // Toggle connection: connect if disconnected; disconnect if connected.
+    // Toggle connection.
     async function toggleConnection() {
         if (!isConnected) {
             await connectToIntiface();
@@ -108,7 +114,7 @@
         updateToggleButton();
     }
 
-    // Create the UI.
+    // Create UI.
     function createUI() {
         const wrapper = document.createElement('div');
         wrapper.id = 'ui-wrapper';
@@ -127,7 +133,7 @@
         panel.style.fontFamily = 'Arial, sans-serif';
         panel.style.position = 'relative';
 
-        // Help button
+        // Help button.
         const helpBtn = document.createElement("button");
         helpBtn.id = "help-btn";
         helpBtn.innerText = "?";
@@ -161,7 +167,6 @@
                 <div id="mapping-settings"></div>
                 <button id="refresh-devices-btn" style="width:100%; padding:5px; margin-top:5px;">Refresh Devices</button>
                 <button id="start-btn" style="width:100%; padding:5px; margin-top:5px;">Start</button>
-                <!-- New V-prefix matching option -->
                 <div id="vprefix-setting" style="margin-top:5px; font-size:12px;">
                     <input type="checkbox" id="v-prefix-checkbox">
                     <label for="v-prefix-checkbox">Only match numbers preceded by "v"</label>
@@ -171,7 +176,7 @@
         `;
         panel.appendChild(contentDiv);
 
-        // Hide UI button
+        // Hide UI button.
         const hideBtn = document.createElement('button');
         hideBtn.id = 'hide-ui-btn';
         hideBtn.innerText = 'Hide UI';
@@ -205,7 +210,7 @@
         createRestoreButton();
     }
 
-    // Create a restore button.
+    // Create restore button.
     function createRestoreButton() {
         const restoreBtn = document.createElement('div');
         restoreBtn.id = 'restore-btn';
@@ -250,7 +255,10 @@
             document.getElementById("status").innerText = "Connected!";
             document.getElementById("status").style.color = "lime";
             debugLog("Connected to Intiface and scanning for devices...");
-            setTimeout(populateMappingSettings, 4000);
+            setTimeout(() => {
+                populateMappingSettings();
+                logAllDevices();
+            }, 4000);
         } catch (err) {
             isConnected = false;
             document.getElementById("status").innerText = "Connection failed!";
@@ -279,7 +287,7 @@
         }
     }
 
-    // Check connection status periodically.
+    // Check connection status.
     function checkConnectionStatus() {
         try {
             if (client && typeof client.connected !== "undefined") {
@@ -304,7 +312,7 @@
         }
     }
 
-    // Populate mapping settings based on connected devices.
+    // Populate mapping settings for each device and each motor.
     function populateMappingSettings() {
         try {
             if (!client || !client.connected) {
@@ -319,79 +327,106 @@
             if (devices.length > 4) {
                 devices = devices.slice(0, 4);
             }
+            // Compute total mapping rows (motors) across all devices.
+            let totalMappingCount = 0;
+            let motorCounts = [];
+            devices.forEach((device) => {
+                let motorCount = 1;
+                if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
+                    motorCount = device._deviceInfo.DeviceMessages.ScalarCmd.length;
+                }
+                motorCounts.push(motorCount);
+                totalMappingCount += motorCount;
+            });
+            debugLog("Total mapping rows (motors): " + totalMappingCount);
+
             const mappingSection = document.getElementById("mapping-section");
             mappingSection.style.display = "block";
             const mappingSettingsDiv = document.getElementById("mapping-settings");
             mappingSettingsDiv.innerHTML = "";
-            for (let i = 0; i < devices.length; i++) {
-                const device = devices[i];
-                const container = document.createElement("div");
-                container.style.marginTop = "10px";
-                container.style.borderBottom = "1px solid #555";
-                container.style.paddingBottom = "5px";
-                const row = document.createElement("div");
-                row.style.display = "flex";
-                row.style.alignItems = "center";
-                row.style.flexWrap = "wrap";
-                const label = document.createElement("div");
-                label.innerText = device.name + ": ";
-                label.style.flex = "1";
-                label.style.whiteSpace = "nowrap";
-                const select = document.createElement("select");
-                select.id = "mapping-device-" + i;
-                for (let j = 1; j <= devices.length; j++) {
-                    const option = document.createElement("option");
-                    option.value = j;
-                    option.text = "Number " + j;
-                    if (j === i + 1) {
-                        option.selected = true;
+            let globalMappingIndex = 0;
+            devices.forEach((device, deviceIndex) => {
+                let motorCount = motorCounts[deviceIndex];
+                debugLog("Device: " + device.name + " reports " + motorCount + " vibration motor(s).");
+                for (let m = 0; m < motorCount; m++) {
+                    const container = document.createElement("div");
+                    container.style.marginTop = "10px";
+                    container.style.borderBottom = "1px solid #555";
+                    container.style.paddingBottom = "5px";
+
+                    // Row for label and dropdown.
+                    const row = document.createElement("div");
+                    row.style.display = "flex";
+                    row.style.alignItems = "center";
+                    row.style.flexWrap = "wrap";
+
+                    const label = document.createElement("div");
+                    label.innerText = `${device.name} (Motor ${m+1}): `;
+                    label.style.flex = "1";
+                    label.style.whiteSpace = "nowrap";
+
+                    const select = document.createElement("select");
+                    select.id = "mapping-device-" + globalMappingIndex;
+                    select.dataset.deviceIndex = deviceIndex;
+                    select.dataset.motorIndex = m;
+                    for (let j = 1; j <= totalMappingCount; j++) {
+                        const option = document.createElement("option");
+                        option.value = j;
+                        option.text = "Number " + j;
+                        if (j === globalMappingIndex + 1) {
+                            option.selected = true;
+                        }
+                        select.appendChild(option);
                     }
-                    select.appendChild(option);
+                    row.appendChild(label);
+                    row.appendChild(select);
+                    container.appendChild(row);
+
+                    // Row for oscillation slider.
+                    const sliderRow = document.createElement("div");
+                    sliderRow.style.marginTop = "5px";
+                    sliderRow.style.display = "flex";
+                    sliderRow.style.alignItems = "center";
+                    const sliderLabel = document.createElement("div");
+                    sliderLabel.innerText = "Osc:";
+                    sliderLabel.style.marginRight = "5px";
+                    const slider = document.createElement("input");
+                    slider.type = "range";
+                    slider.min = "0";
+                    slider.max = "50";
+                    slider.step = "1";
+                    slider.value = "0";
+                    slider.id = "osc-device-" + globalMappingIndex;
+                    const sliderValue = document.createElement("span");
+                    sliderValue.id = "osc-value-display-" + globalMappingIndex;
+                    sliderValue.innerText = "0%";
+                    sliderValue.style.marginLeft = "5px";
+                    slider.addEventListener("input", function() {
+                        sliderValue.innerText = slider.value + "%";
+                        if(mappingStarted) {
+                            mappingStarted = false;
+                            const startBtn = document.getElementById("start-btn");
+                            startBtn.innerText = "Restart";
+                            startBtn.style.backgroundColor = "#ff9800";
+                            startBtn.style.border = "2px solid #fff";
+                            startBtn.style.fontWeight = "bold";
+                        }
+                    });
+                    sliderRow.appendChild(sliderLabel);
+                    sliderRow.appendChild(slider);
+                    sliderRow.appendChild(sliderValue);
+                    container.appendChild(sliderRow);
+
+                    mappingSettingsDiv.appendChild(container);
+                    globalMappingIndex++;
                 }
-                row.appendChild(label);
-                row.appendChild(select);
-                container.appendChild(row);
-                const sliderRow = document.createElement("div");
-                sliderRow.style.marginTop = "5px";
-                sliderRow.style.display = "flex";
-                sliderRow.style.alignItems = "center";
-                const sliderLabel = document.createElement("div");
-                sliderLabel.innerText = "Osc:";
-                sliderLabel.style.marginRight = "5px";
-                const slider = document.createElement("input");
-                slider.type = "range";
-                slider.min = "0";
-                slider.max = "50";
-                slider.step = "1";
-                slider.value = "0";
-                slider.id = "osc-device-" + i;
-                const sliderValue = document.createElement("span");
-                sliderValue.id = "osc-value-display-" + i;
-                sliderValue.innerText = "0%";
-                sliderValue.style.marginLeft = "5px";
-                slider.addEventListener("input", function() {
-                    sliderValue.innerText = slider.value + "%";
-                    if (mappingStarted) {
-                        mappingStarted = false;
-                        const startBtn = document.getElementById("start-btn");
-                        startBtn.innerText = "Restart";
-                        startBtn.style.backgroundColor = "#ff9800";
-                        startBtn.style.border = "2px solid #fff";
-                        startBtn.style.fontWeight = "bold";
-                    }
-                });
-                sliderRow.appendChild(sliderLabel);
-                sliderRow.appendChild(slider);
-                sliderRow.appendChild(sliderValue);
-                container.appendChild(sliderRow);
-                mappingSettingsDiv.appendChild(container);
-            }
+            });
         } catch (e) {
             debugLog("Error in populateMappingSettings: " + e);
         }
     }
 
-    // Start processing chat messages (mapping).
+    // Start mapping: build mappingConfig for each mapping row.
     function startMapping() {
         // Clear any existing oscillation timers.
         if (oscillationTimers && oscillationTimers.length > 0) {
@@ -408,18 +443,31 @@
         oscillationTimers = [];
         oscillationBases = [];
         oscillationStartTime = [];
+        // Also clear last device commands so that we start fresh.
+        lastDeviceCommands = new Map();
+
         for (let i = 0; i < selects.length; i++) {
             const sel = selects[i];
             const mappingValue = parseInt(sel.value, 10);
             const slider = document.getElementById("osc-device-" + i);
             const oscValue = parseFloat(slider.value) || 0;
-            mappingConfig.push({ mapping: mappingValue, osc: oscValue });
+            const deviceIndex = parseInt(sel.dataset.deviceIndex, 10);
+            const motorIndex = parseInt(sel.dataset.motorIndex, 10);
+            mappingConfig.push({
+                mapping: mappingValue,
+                osc: oscValue,
+                device: client.devices[deviceIndex],
+                motor: motorIndex,
+                intensity: 0
+            });
             lastSentValues.push(null);
             oscillationTimers.push(null);
             oscillationBases.push(null);
             oscillationStartTime.push(null);
         }
-        debugLog("Mapping configuration set: " + mappingConfig.map(obj => `(${obj.mapping}, ${obj.osc}%)`).join(", "));
+        debugLog("Mapping configuration set: " + mappingConfig.map(obj =>
+            `(${obj.device.name} Motor ${obj.motor+1} -> Number ${obj.mapping}, ${obj.osc}%)`
+        ).join(", "));
         mappingStarted = true;
         mappingProcessingInterval = setInterval(checkMessages, 2000);
         const startBtn = document.getElementById("start-btn");
@@ -429,7 +477,7 @@
         startBtn.style.fontWeight = "";
     }
 
-    // Stop processing messages and send a 0 command to every device.
+    // Stop mapping.
     function stopMapping() {
         if (mappingProcessingInterval) {
             clearInterval(mappingProcessingInterval);
@@ -445,17 +493,21 @@
             }
         }
         try {
-            if (client && client.devices && client.devices.length > 0) {
-                for (let i = 0; i < client.devices.length; i++) {
-                    sendVibrationCommandToDevice(client.devices[i], 0);
+            // For each mapping row, send stop command.
+            mappingConfig.forEach(config => {
+                let motorCount = 1;
+                if (config.device._deviceInfo && config.device._deviceInfo.DeviceMessages && config.device._deviceInfo.DeviceMessages.ScalarCmd) {
+                    motorCount = config.device._deviceInfo.DeviceMessages.ScalarCmd.length;
                 }
-            }
+                let zeros = Array(motorCount).fill(0);
+                sendVibrationCommandToDevice(config.device, zeros);
+            });
         } catch (e) {
             debugLog("Error sending stop command: " + e);
         }
     }
 
-    // Toggle mapping: start if not running; stop if running.
+    // Toggle mapping.
     function toggleMapping() {
         if (mappingStarted) {
             stopMapping();
@@ -464,13 +516,11 @@
         }
     }
 
-    // Updated checkMessages function that reconstructs the full message from split spans.
-    // It now also filters out numbers outside the range 0 to 100.
+    // Process chat messages.
     function checkMessages() {
         if (!isConnected || !mappingStarted) return;
         let msgs;
         try {
-            // Query for both full message containers and individual word elements with the AI class.
             msgs = document.querySelectorAll('.chat-window .msg-content.AI, .chat-window .word.AI');
         } catch (e) {
             debugLog("Error accessing chat messages: " + e);
@@ -481,7 +531,6 @@
             return;
         }
         let validMsg = null;
-        // Iterate backwards to find the most recent message that contains a number.
         for (let i = msgs.length - 1; i >= 0; i--) {
             let text = "";
             if (msgs[i].classList.contains("msg-content")) {
@@ -489,7 +538,6 @@
             } else if (msgs[i].classList.contains("word")) {
                 let parent = msgs[i].parentElement;
                 if (parent) {
-                    // Combine text from all child spans with class "word"
                     let words = parent.querySelectorAll(".word.AI");
                     words.forEach(word => { text += word.textContent; });
                     text = text.trim();
@@ -505,100 +553,92 @@
             return;
         }
         debugLog("Latest valid message: " + validMsg);
-
-        // Determine which regex to use based on the checkbox.
         let numberMatches;
         const vCheckbox = document.getElementById("v-prefix-checkbox");
         if (vCheckbox && vCheckbox.checked) {
-            // Look for numbers preceded by the letter 'v' (case-insensitive)
             numberMatches = validMsg.match(/v(\d{1,3})/gi);
             if (numberMatches) {
                 numberMatches = numberMatches.map(match => match.replace(/v/gi, ""));
             }
         } else {
-            // Match every one-to-three-digit number.
             numberMatches = validMsg.match(/\d{1,3}/g);
         }
-
         if (!numberMatches) {
             debugLog("No numbers found in the message.");
             return;
         }
-
-        // Filter numbers to only those between 0 and 100.
+        // Filter numbers in the 0-100 range.
         numberMatches = numberMatches.filter(numStr => {
             const n = parseInt(numStr, 10);
             return n >= 0 && n <= 100;
         });
-
         if (numberMatches.length === 0) {
             debugLog("No numbers in range 0-100 found in the message.");
             return;
         }
-
         document.getElementById("last-value").innerText = "Last Read: " + numberMatches.join(", ");
 
-        // Process each device mapping.
+        // Aggregate commands per device.
+        let deviceCommands = new Map();
         for (let i = 0; i < mappingConfig.length; i++) {
             const mappingObj = mappingConfig[i];
-            const chatIndex = mappingObj.mapping - 1; // 0-based index
+            const chatIndex = mappingObj.mapping - 1;
             if (chatIndex < numberMatches.length) {
                 const newValue = parseInt(numberMatches[chatIndex], 10);
-                // Only process if the newValue is in the allowed range.
-                if (newValue < 0 || newValue > 100) {
-                    debugLog(`Device ${i + 1}: Value ${newValue} out of range, ignoring.`);
-                    continue;
-                }
                 if (newValue !== lastSentValues[i]) {
-                    if (oscillationTimers[i]) {
-                        clearInterval(oscillationTimers[i]);
-                        oscillationTimers[i] = null;
-                    }
-                    oscillationBases[i] = newValue;
-                    oscillationStartTime[i] = Date.now();
-                    sendVibrationCommandToDevice(client.devices[i], newValue);
                     lastSentValues[i] = newValue;
-                } else {
-                    if (mappingObj.osc > 0) {
-                        if (!oscillationTimers[i]) {
-                            oscillationStartTime[i] = Date.now();
-                            oscillationTimers[i] = setInterval(function() {
-                                const frequency = 0.5; // Hz
-                                const t = (Date.now() - oscillationStartTime[i]) / 1000;
-                                const base = oscillationBases[i];
-                                const amplitude = (mappingObj.osc / 100) * base;
-                                let oscillated = base + amplitude * Math.sin(2 * Math.PI * frequency * t);
-                                oscillated = Math.max(0, Math.min(100, oscillated));
-                                sendVibrationCommandToDevice(client.devices[i], oscillated);
-                            }, 175);
-                        }
-                    } else {
-                        if (oscillationTimers[i]) {
-                            clearInterval(oscillationTimers[i]);
-                            oscillationTimers[i] = null;
-                        }
-                    }
+                    mappingObj.intensity = Math.min(Math.max(newValue / 100, 0), 1);
                 }
+                let motorCount = 1;
+                const device = mappingObj.device;
+                if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
+                    motorCount = device._deviceInfo.DeviceMessages.ScalarCmd.length;
+                }
+                if (!deviceCommands.has(device)) {
+                    deviceCommands.set(device, Array(motorCount).fill(0));
+                }
+                let speeds = deviceCommands.get(device);
+                speeds[mappingObj.motor] = mappingObj.intensity;
             } else {
-                debugLog(`Device ${i + 1}: No corresponding number found in the message.`);
+                debugLog(`Mapping row ${i+1}: No corresponding number found in the message.`);
+            }
+        }
+        // Now send command per device only if the aggregated array has changed.
+        for (let [device, speeds] of deviceCommands.entries()) {
+            let send = true;
+            if (lastDeviceCommands.has(device)) {
+                const prev = lastDeviceCommands.get(device);
+                if (arraysEqual(prev, speeds)) {
+                    send = false;
+                }
+            }
+            if (send) {
+                sendVibrationCommandToDevice(device, speeds);
+                // Store a copy of speeds.
+                lastDeviceCommands.set(device, speeds.slice());
             }
         }
     }
 
-    // Send a vibration command to a device.
-    async function sendVibrationCommandToDevice(device, vibValue) {
+    // Send a vibration command.
+    async function sendVibrationCommandToDevice(device, vibValueOrArray) {
         if (!device || !device.vibrate) return;
-        const intensity = Math.min(Math.max(vibValue / 100, 0), 1);
-        await device.vibrate(intensity);
-        debugLog(`Sent vibration: ${roundTo3(intensity)} to ${device.name}`);
+        if (Array.isArray(vibValueOrArray)) {
+            await device.vibrate(vibValueOrArray);
+            debugLog(`Sent vibration array: ${JSON.stringify(vibValueOrArray)} to ${device.name}`);
+        } else {
+            const intensity = Math.min(Math.max(vibValueOrArray / 100, 0), 1);
+            await device.vibrate(intensity);
+            debugLog(`Sent vibration: ${roundTo3(intensity)} to ${device.name}`);
+        }
     }
 
-    // Initialize help popup, UI, and start connection status checks.
+    // Initialize help popup, UI, and connection status checks.
     createHelpPanel();
     createUI();
     connectionCheckInterval = setInterval(checkConnectionStatus, 10000);
 
-    // Set up a MutationObserver for chat window updates.
+    // Set up MutationObserver for chat updates.
     setTimeout(() => {
         const chatWindow = document.querySelector('.chat-window');
         if (chatWindow) {
