@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         The Ai Peeps Intiface / Buttplug.IO Sync
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Controls vibration based on chat messages with UI. Now supports devices with multiple motors by aggregating commands per device and only sending new commands if they differ.
+// @version      1.3.1
+// @description  Controls vibration based on chat messages with UI. Supports devices with multiple motors and oscillation.
 // @author       Crispy-repo
 // @match        https://www.theaipeeps.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=theaipeeps.com
@@ -17,17 +17,18 @@
     let client = null;
     let isConnected = false;
     let mappingStarted = false;
-    // mappingConfig holds one object per mapping row: { mapping: number, osc: number, device: deviceObj, motor: number, intensity: number }
+    // mappingConfig holds one object per mapping row (each motor):
+    // { mapping: number, osc: number, device: deviceObj, motor: number, intensity: number }
     let mappingConfig = [];
-    let lastSentValues = []; // per mapping row
-    // Oscillation variables (currently unused but left for potential future use)
+    let lastSentValues = []; // holds last raw value per mapping row (0-100)
+    // Oscillation arrays (per mapping row)
     let oscillationTimers = [];
-    let oscillationBases = [];
-    let oscillationStartTime = [];
+    let oscillationBases = [];      // base intensity (0-1)
+    let oscillationStartTime = [];  // timestamp for oscillation start
     // Intervals
     let mappingProcessingInterval = null;
     let connectionCheckInterval = null;
-    // New global map to store last command sent per device.
+    // Last aggregated command sent per device (Map from device object to array of intensities)
     let lastDeviceCommands = new Map();
 
     // Helper: round to 3 decimals.
@@ -49,20 +50,20 @@
         console.log(message);
     }
 
-    // Toggle help/documentation popup.
+    // Toggle the help/documentation popup.
     function toggleDocumentation() {
         const helpPanel = document.getElementById("help-panel");
         helpPanel.style.display = (!helpPanel.style.display || helpPanel.style.display === "none") ? "block" : "none";
     }
 
-    // Create help/documentation popup.
+    // Create the help/documentation popup.
     function createHelpPanel() {
         const helpPanel = document.createElement("div");
         helpPanel.id = "help-panel";
         helpPanel.style.position = "fixed";
         helpPanel.style.bottom = "calc(95px + 320px)";
         helpPanel.style.right = "10px";
-        helpPanel.style.width = "400px";
+        helpPanel.style.width = "600px"; // widened for long names
         helpPanel.style.background = "rgba(0,0,0,0.9)";
         helpPanel.style.color = "white";
         helpPanel.style.padding = "10px";
@@ -87,7 +88,7 @@
         document.body.appendChild(helpPanel);
     }
 
-    // Update connection toggle button.
+    // Update the connection toggle button appearance.
     function updateToggleButton() {
         const btn = document.getElementById("connect-btn");
         if (isConnected) {
@@ -114,7 +115,7 @@
         updateToggleButton();
     }
 
-    // Create UI.
+    // Create the UI.
     function createUI() {
         const wrapper = document.createElement('div');
         wrapper.id = 'ui-wrapper';
@@ -125,7 +126,7 @@
 
         const panel = document.createElement('div');
         panel.id = 'control-panel';
-        panel.style.width = '400px';
+        panel.style.width = '600px'; // widened
         panel.style.background = 'rgba(0,0,0,0.8)';
         panel.style.color = 'white';
         panel.style.padding = '10px';
@@ -312,6 +313,33 @@
         }
     }
 
+    // Log complete device information for debugging.
+    function logAllDevices() {
+        if (client && client.devices) {
+            client.devices.forEach((device, index) => {
+                debugLog(`Device ${index+1} info: ${JSON.stringify(device._deviceInfo, null, 2)}`);
+            });
+        }
+    }
+
+    // Update aggregated command for a given device.
+    function updateAggregatedCommandForDevice(device) {
+        let motorCount = 1;
+        if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
+            motorCount = device._deviceInfo.DeviceMessages.ScalarCmd.length;
+        }
+        let speeds = Array(motorCount).fill(0);
+        mappingConfig.forEach(config => {
+            if (config.device === device) {
+                speeds[config.motor] = config.intensity;
+            }
+        });
+        if (!lastDeviceCommands.has(device) || !arraysEqual(lastDeviceCommands.get(device), speeds)) {
+            sendVibrationCommandToDevice(device, speeds);
+            lastDeviceCommands.set(device, speeds.slice());
+        }
+    }
+
     // Populate mapping settings for each device and each motor.
     function populateMappingSettings() {
         try {
@@ -353,18 +381,18 @@
                     container.style.marginTop = "10px";
                     container.style.borderBottom = "1px solid #555";
                     container.style.paddingBottom = "5px";
-
+                    
                     // Row for label and dropdown.
                     const row = document.createElement("div");
                     row.style.display = "flex";
                     row.style.alignItems = "center";
                     row.style.flexWrap = "wrap";
-
+                    
                     const label = document.createElement("div");
                     label.innerText = `${device.name} (Motor ${m+1}): `;
                     label.style.flex = "1";
                     label.style.whiteSpace = "nowrap";
-
+                    
                     const select = document.createElement("select");
                     select.id = "mapping-device-" + globalMappingIndex;
                     select.dataset.deviceIndex = deviceIndex;
@@ -426,7 +454,7 @@
         }
     }
 
-    // Start mapping: build mappingConfig for each mapping row.
+    // Start mapping: build mappingConfig for each mapping row and clear any old oscillation timers.
     function startMapping() {
         // Clear any existing oscillation timers.
         if (oscillationTimers && oscillationTimers.length > 0) {
@@ -443,7 +471,6 @@
         oscillationTimers = [];
         oscillationBases = [];
         oscillationStartTime = [];
-        // Also clear last device commands so that we start fresh.
         lastDeviceCommands = new Map();
 
         for (let i = 0; i < selects.length; i++) {
@@ -477,7 +504,7 @@
         startBtn.style.fontWeight = "";
     }
 
-    // Stop mapping.
+    // Stop mapping: clear intervals and send stop command.
     function stopMapping() {
         if (mappingProcessingInterval) {
             clearInterval(mappingProcessingInterval);
@@ -493,7 +520,7 @@
             }
         }
         try {
-            // For each mapping row, send stop command.
+            // For each mapping row, send stop command (0 intensity for all motors of a device).
             mappingConfig.forEach(config => {
                 let motorCount = 1;
                 if (config.device._deviceInfo && config.device._deviceInfo.DeviceMessages && config.device._deviceInfo.DeviceMessages.ScalarCmd) {
@@ -513,6 +540,24 @@
             stopMapping();
         } else {
             startMapping();
+        }
+    }
+
+    // Function to update aggregated command for a device (used by oscillation timers).
+    function updateAggregatedCommandForDevice(device) {
+        let motorCount = 1;
+        if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
+            motorCount = device._deviceInfo.DeviceMessages.ScalarCmd.length;
+        }
+        let speeds = Array(motorCount).fill(0);
+        mappingConfig.forEach(config => {
+            if (config.device === device) {
+                speeds[config.motor] = config.intensity;
+            }
+        });
+        if (!lastDeviceCommands.has(device) || !arraysEqual(lastDeviceCommands.get(device), speeds)) {
+            sendVibrationCommandToDevice(device, speeds);
+            lastDeviceCommands.set(device, speeds.slice());
         }
     }
 
@@ -553,6 +598,7 @@
             return;
         }
         debugLog("Latest valid message: " + validMsg);
+
         let numberMatches;
         const vCheckbox = document.getElementById("v-prefix-checkbox");
         if (vCheckbox && vCheckbox.checked) {
@@ -578,46 +624,59 @@
         }
         document.getElementById("last-value").innerText = "Last Read: " + numberMatches.join(", ");
 
-        // Aggregate commands per device.
-        let deviceCommands = new Map();
+        // For each mapping row, update its intensity based on the corresponding number.
         for (let i = 0; i < mappingConfig.length; i++) {
             const mappingObj = mappingConfig[i];
             const chatIndex = mappingObj.mapping - 1;
             if (chatIndex < numberMatches.length) {
                 const newValue = parseInt(numberMatches[chatIndex], 10);
+                // If new value differs from the last value, update and clear any oscillation timer.
                 if (newValue !== lastSentValues[i]) {
                     lastSentValues[i] = newValue;
-                    mappingObj.intensity = Math.min(Math.max(newValue / 100, 0), 1);
+                    mappingObj.intensity = newValue / 100;
+                    // Clear any oscillation timer for this row.
+                    if (oscillationTimers[i]) {
+                        clearInterval(oscillationTimers[i]);
+                        oscillationTimers[i] = null;
+                    }
+                    // Immediately update aggregated command for this device.
+                    updateAggregatedCommandForDevice(mappingObj.device);
+                } else {
+                    // Same value; if oscillation is enabled, start oscillation timer if not already started.
+                    if (mappingObj.osc > 0) {
+                        if (!oscillationTimers[i]) {
+                            oscillationStartTime[i] = Date.now();
+                            oscillationBases[i] = mappingObj.intensity; // current base intensity (0-1)
+                            oscillationTimers[i] = setInterval(() => {
+                                const frequency = 0.5; // Hz
+                                const t = (Date.now() - oscillationStartTime[i]) / 1000;
+                                const amplitude = (mappingObj.osc / 100) * oscillationBases[i];
+                                let oscillated = oscillationBases[i] + amplitude * Math.sin(2 * Math.PI * frequency * t);
+                                oscillated = Math.max(0, Math.min(1, oscillated));
+                                mappingObj.intensity = oscillated;
+                                updateAggregatedCommandForDevice(mappingObj.device);
+                            }, 175);
+                        }
+                    } else {
+                        // No oscillation setting; clear timer if exists.
+                        if (oscillationTimers[i]) {
+                            clearInterval(oscillationTimers[i]);
+                            oscillationTimers[i] = null;
+                        }
+                    }
                 }
-                let motorCount = 1;
-                const device = mappingObj.device;
-                if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
-                    motorCount = device._deviceInfo.DeviceMessages.ScalarCmd.length;
-                }
-                if (!deviceCommands.has(device)) {
-                    deviceCommands.set(device, Array(motorCount).fill(0));
-                }
-                let speeds = deviceCommands.get(device);
-                speeds[mappingObj.motor] = mappingObj.intensity;
             } else {
                 debugLog(`Mapping row ${i+1}: No corresponding number found in the message.`);
             }
         }
-        // Now send command per device only if the aggregated array has changed.
-        for (let [device, speeds] of deviceCommands.entries()) {
-            let send = true;
-            if (lastDeviceCommands.has(device)) {
-                const prev = lastDeviceCommands.get(device);
-                if (arraysEqual(prev, speeds)) {
-                    send = false;
-                }
+        // Additionally, update aggregated commands for any devices that haven't been updated in this pass.
+        let updatedDevices = new Set();
+        mappingConfig.forEach(config => {
+            if (!updatedDevices.has(config.device)) {
+                updateAggregatedCommandForDevice(config.device);
+                updatedDevices.add(config.device);
             }
-            if (send) {
-                sendVibrationCommandToDevice(device, speeds);
-                // Store a copy of speeds.
-                lastDeviceCommands.set(device, speeds.slice());
-            }
-        }
+        });
     }
 
     // Send a vibration command.
