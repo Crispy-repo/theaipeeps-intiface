@@ -111,65 +111,6 @@
         updateToggleButton();
     }
 
-    // Start processing chat messages (mapping).
-    function startMapping() {
-        // Clear any existing oscillation timers.
-        if (oscillationTimers && oscillationTimers.length > 0) {
-            for (let i = 0; i < oscillationTimers.length; i++) {
-                if (oscillationTimers[i]) {
-                    clearInterval(oscillationTimers[i]);
-                }
-            }
-        }
-        const mappingSettingsDiv = document.getElementById("mapping-settings");
-        const selects = mappingSettingsDiv.getElementsByTagName("select");
-        mappingConfig = [];
-        lastSentValues = [];
-        oscillationTimers = [];
-        oscillationBases = [];
-        oscillationStartTime = [];
-        for (let i = 0; i < selects.length; i++) {
-            const sel = selects[i];
-            const mappingValue = parseInt(sel.value, 10);
-            const slider = document.getElementById("osc-device-" + i);
-            const oscValue = parseFloat(slider.value) || 0;
-            mappingConfig.push({ mapping: mappingValue, osc: oscValue });
-            lastSentValues.push(null);
-            oscillationTimers.push(null);
-            oscillationBases.push(null);
-            oscillationStartTime.push(null);
-        }
-        debugLog("Mapping configuration set: " + mappingConfig.map(obj => `(${obj.mapping}, ${obj.osc}%)`).join(", "));
-        mappingStarted = true;
-        mappingProcessingInterval = setInterval(checkMessages, 2000);
-        const startBtn = document.getElementById("start-btn");
-        startBtn.innerText = "Stop";
-        startBtn.style.backgroundColor = "";
-        startBtn.style.border = "";
-        startBtn.style.fontWeight = "";
-    }
-
-    // Stop processing chat messages (mapping) and send 0 to every device.
-    function stopMapping() {
-        if (mappingProcessingInterval) {
-            clearInterval(mappingProcessingInterval);
-            mappingProcessingInterval = null;
-        }
-        mappingStarted = false;
-        const startBtn = document.getElementById("start-btn");
-        startBtn.innerText = "Start";
-        // Send a 0 command to every device.
-        try {
-            if (client && client.devices && client.devices.length > 0) {
-                for (let i = 0; i < client.devices.length; i++) {
-                    sendVibrationCommandToDevice(client.devices[i], 0);
-                }
-            }
-        } catch(e) {
-            debugLog("Error sending stop command: " + e);
-        }
-    }
-
     // Toggle mapping processing: start if not running; stop if running.
     function toggleMapping() {
         if (mappingStarted) {
