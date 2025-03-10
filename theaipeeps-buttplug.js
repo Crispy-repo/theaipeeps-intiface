@@ -24,11 +24,11 @@
     let oscillationTimers = [];
     let oscillationBases = [];
     let oscillationStartTime = [];
-    // Interval for chat processing (mapping) and connection check.
+    // Intervals for chat processing and connection checking.
     let mappingProcessingInterval = null;
     let connectionCheckInterval = null;
 
-    // Helper: round to 3 decimals.
+    // Helper: round a number to 3 decimal places.
     function roundTo3(num) {
         return Math.round(num * 1000) / 1000;
     }
@@ -53,9 +53,9 @@
         const helpPanel = document.createElement("div");
         helpPanel.id = "help-panel";
         helpPanel.style.position = "fixed";
-        helpPanel.style.bottom = "calc(95px + 320px)";
+        helpPanel.style.bottom = "calc(95px + 320px)"; // positioned above the UI; adjust if needed
         helpPanel.style.right = "10px";
-        helpPanel.style.width = "400px";
+        helpPanel.style.width = "400px"; // wider to match panel
         helpPanel.style.background = "rgba(0,0,0,0.9)";
         helpPanel.style.color = "white";
         helpPanel.style.padding = "10px";
@@ -74,7 +74,8 @@
             <em>Connection:</em><br>
             - The toggle button shows a red dot with "Connect" when disconnected and a green dot with "Disconnect" when connected.<br><br>
             <em>Chat Processing:</em><br>
-            - The script reconstructs AI messages from split elements so numbers split across spans are captured.<br><br>
+            - The script reconstructs AI messages from split elements so numbers split across spans are captured.<br>
+            - Use the new checkbox to limit matching to numbers with a "v" prefix (e.g. v34) or all numbers.<br><br>
             Click the "?" button again to close this help.
         `;
         document.body.appendChild(helpPanel);
@@ -90,7 +91,7 @@
         }
     }
 
-    // Toggle connection: connect if disconnected, disconnect if connected.
+    // Toggle connection: connect if disconnected; disconnect if connected.
     async function toggleConnection() {
         if (!isConnected) {
             await connectToIntiface();
@@ -160,6 +161,11 @@
                 <div id="mapping-settings"></div>
                 <button id="refresh-devices-btn" style="width:100%; padding:5px; margin-top:5px;">Refresh Devices</button>
                 <button id="start-btn" style="width:100%; padding:5px; margin-top:5px;">Start</button>
+                <!-- New V-prefix matching option -->
+                <div id="vprefix-setting" style="margin-top:5px; font-size:12px;">
+                    <input type="checkbox" id="v-prefix-checkbox">
+                    <label for="v-prefix-checkbox">Only match numbers preceded by "v"</label>
+                </div>
             </div>
             <div id="last-value" style="margin-top:10px; font-size:14px;">Last Read: None</div>
         `;
@@ -459,11 +465,12 @@
     }
 
     // Updated checkMessages function that reconstructs the full message from split spans.
+    // It now also filters out numbers outside the range 0 to 100.
     function checkMessages() {
         if (!isConnected || !mappingStarted) return;
         let msgs;
         try {
-            // Query for both full message containers and individual word elements with AI class.
+            // Query for both full message containers and individual word elements with the AI class.
             msgs = document.querySelectorAll('.chat-window .msg-content.AI, .chat-window .word.AI');
         } catch (e) {
             debugLog("Error accessing chat messages: " + e);
@@ -498,17 +505,50 @@
             return;
         }
         debugLog("Latest valid message: " + validMsg);
-        const numberMatches = validMsg.match(/\d{1,3}/g);
+
+        // Determine which regex to use based on the checkbox.
+        let numberMatches;
+        const vCheckbox = document.getElementById("v-prefix-checkbox");
+        if (vCheckbox && vCheckbox.checked) {
+            // Look for numbers preceded by the letter 'v' (case-insensitive)
+            numberMatches = validMsg.match(/v(\d{1,3})/gi);
+            if (numberMatches) {
+                numberMatches = numberMatches.map(match => match.replace(/v/gi, ""));
+            }
+        } else {
+            // Match every one-to-three-digit number.
+            numberMatches = validMsg.match(/\d{1,3}/g);
+        }
+
         if (!numberMatches) {
             debugLog("No numbers found in the message.");
             return;
         }
+
+        // Filter numbers to only those between 0 and 100.
+        numberMatches = numberMatches.filter(numStr => {
+            const n = parseInt(numStr, 10);
+            return n >= 0 && n <= 100;
+        });
+
+        if (numberMatches.length === 0) {
+            debugLog("No numbers in range 0-100 found in the message.");
+            return;
+        }
+
         document.getElementById("last-value").innerText = "Last Read: " + numberMatches.join(", ");
+
+        // Process each device mapping.
         for (let i = 0; i < mappingConfig.length; i++) {
             const mappingObj = mappingConfig[i];
-            const chatIndex = mappingObj.mapping - 1;
+            const chatIndex = mappingObj.mapping - 1; // 0-based index
             if (chatIndex < numberMatches.length) {
                 const newValue = parseInt(numberMatches[chatIndex], 10);
+                // Only process if the newValue is in the allowed range.
+                if (newValue < 0 || newValue > 100) {
+                    debugLog(`Device ${i + 1}: Value ${newValue} out of range, ignoring.`);
+                    continue;
+                }
                 if (newValue !== lastSentValues[i]) {
                     if (oscillationTimers[i]) {
                         clearInterval(oscillationTimers[i]);
@@ -558,7 +598,7 @@
     createUI();
     connectionCheckInterval = setInterval(checkConnectionStatus, 10000);
 
-    // Optionally, set up a MutationObserver for chat window updates.
+    // Set up a MutationObserver for chat window updates.
     setTimeout(() => {
         const chatWindow = document.querySelector('.chat-window');
         if (chatWindow) {
