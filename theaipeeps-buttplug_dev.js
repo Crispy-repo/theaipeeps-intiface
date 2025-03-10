@@ -353,18 +353,18 @@
                     container.style.marginTop = "10px";
                     container.style.borderBottom = "1px solid #555";
                     container.style.paddingBottom = "5px";
-                    
+
                     // Row for label and dropdown.
                     const row = document.createElement("div");
                     row.style.display = "flex";
                     row.style.alignItems = "center";
                     row.style.flexWrap = "wrap";
-                    
+
                     const label = document.createElement("div");
                     label.innerText = `${device.name} (Motor ${m+1}): `;
                     label.style.flex = "1";
                     label.style.whiteSpace = "nowrap";
-                    
+
                     const select = document.createElement("select");
                     select.id = "mapping-device-" + globalMappingIndex;
                     select.dataset.deviceIndex = deviceIndex;
