@@ -10,9 +10,6 @@
 // @require      https://cdn.jsdelivr.net/npm/buttplug@3.0.0/dist/web/buttplug.min.js
 // ==/UserScript==
 
-
-
-
 (async function() {
     'use strict';
 
@@ -27,12 +24,11 @@
     let oscillationTimers = [];
     let oscillationBases = [];
     let oscillationStartTime = [];
-    // Interval for chat processing (mapping)
+    // Interval for chat processing (mapping) and connection check.
     let mappingProcessingInterval = null;
-    // Global variable for the connection status check interval.
     let connectionCheckInterval = null;
 
-    // Helper function to round a number to 3 decimal places.
+    // Helper: round to 3 decimals.
     function roundTo3(num) {
         return Math.round(num * 1000) / 1000;
     }
@@ -57,9 +53,9 @@
         const helpPanel = document.createElement("div");
         helpPanel.id = "help-panel";
         helpPanel.style.position = "fixed";
-        helpPanel.style.bottom = "calc(95px + 320px)"; // positioned above the UI; adjust if needed
+        helpPanel.style.bottom = "calc(95px + 320px)";
         helpPanel.style.right = "10px";
-        helpPanel.style.width = "400px"; // wider to match panel
+        helpPanel.style.width = "400px";
         helpPanel.style.background = "rgba(0,0,0,0.9)";
         helpPanel.style.color = "white";
         helpPanel.style.padding = "10px";
@@ -73,18 +69,18 @@
             This program connects to Intiface using the fixed URL <code>ws://localhost:12345</code> and scans for connected devices.<br><br>
             <em>Mapping Settings:</em><br>
             - Use the dropdowns to assign which chat message number controls each device.<br>
-            - Under each device, adjust the slider (0–50) to set an oscillation percentage. For example, 10 means the device’s intensity will oscillate between base ± 10% of the base value if no new value arrives.<br>
+            - Under each device, adjust the slider (0–50) to set an oscillation percentage. For example, 10 means the device’s intensity will oscillate ±10% of the base value if no new value arrives.<br>
             - The oscillated intensity is clamped between 0 and 100.<br><br>
             <em>Connection:</em><br>
             - The toggle button shows a red dot with "Connect" when disconnected and a green dot with "Disconnect" when connected.<br><br>
             <em>Chat Processing:</em><br>
-            - The script listens for chat messages containing numbers and sends vibration commands accordingly.<br><br>
+            - The script reconstructs AI messages from split elements so numbers split across spans are captured.<br><br>
             Click the "?" button again to close this help.
         `;
         document.body.appendChild(helpPanel);
     }
 
-    // Update the toggle button appearance based on connection status.
+    // Update the connection toggle button appearance.
     function updateToggleButton() {
         const btn = document.getElementById("connect-btn");
         if (isConnected) {
@@ -94,7 +90,7 @@
         }
     }
 
-    // Toggle connection: if connected, disconnect; if not, connect.
+    // Toggle connection: connect if disconnected, disconnect if connected.
     async function toggleConnection() {
         if (!isConnected) {
             await connectToIntiface();
@@ -111,30 +107,18 @@
         updateToggleButton();
     }
 
-    // Toggle mapping processing: start if not running; stop if running.
-    function toggleMapping() {
-        if (mappingStarted) {
-            stopMapping();
-        } else {
-            startMapping();
-        }
-    }
-
-    // Create the UI. The UI wrapper holds the help button and control panel.
+    // Create the UI.
     function createUI() {
-        // Create a container for the UI.
         const wrapper = document.createElement('div');
         wrapper.id = 'ui-wrapper';
-        // Position the wrapper fixed at bottom-right.
         wrapper.style.position = 'fixed';
         wrapper.style.bottom = '10px';
         wrapper.style.right = '10px';
         wrapper.style.zIndex = '9999';
 
-        // Create the main control panel.
         const panel = document.createElement('div');
         panel.id = 'control-panel';
-        panel.style.width = '400px'; // wider panel
+        panel.style.width = '400px';
         panel.style.background = 'rgba(0,0,0,0.8)';
         panel.style.color = 'white';
         panel.style.padding = '10px';
@@ -142,13 +126,13 @@
         panel.style.fontFamily = 'Arial, sans-serif';
         panel.style.position = 'relative';
 
-        // Add the help ("?") button inside the panel at the top left.
+        // Help button
         const helpBtn = document.createElement("button");
         helpBtn.id = "help-btn";
         helpBtn.innerText = "?";
         helpBtn.style.position = "absolute";
         helpBtn.style.top = "5px";
-        helpBtn.style.left = "5px"; // flush with left edge of the panel
+        helpBtn.style.left = "5px";
         helpBtn.style.background = "none";
         helpBtn.style.border = "none";
         helpBtn.style.color = "white";
@@ -156,7 +140,6 @@
         helpBtn.style.cursor = "pointer";
         panel.appendChild(helpBtn);
 
-        // Create a content container with margin to avoid overlap with the help button.
         const contentDiv = document.createElement("div");
         contentDiv.style.marginTop = "30px";
         contentDiv.innerHTML = `
@@ -182,7 +165,7 @@
         `;
         panel.appendChild(contentDiv);
 
-        // Create the "Hide UI" button inside the panel (top right).
+        // Hide UI button
         const hideBtn = document.createElement('button');
         hideBtn.id = 'hide-ui-btn';
         hideBtn.innerText = 'Hide UI';
@@ -194,18 +177,15 @@
         hideBtn.style.cursor = 'pointer';
         panel.appendChild(hideBtn);
 
-        // Append the panel to the wrapper.
         wrapper.appendChild(panel);
         document.body.appendChild(wrapper);
 
-        // Hook up event listeners.
         helpBtn.addEventListener("click", toggleDocumentation);
         document.getElementById("connect-btn").addEventListener("click", toggleConnection);
         hideBtn.addEventListener("click", function() {
             wrapper.style.display = 'none';
             showRestoreButton();
         });
-        // Use toggleMapping for the start button.
         document.getElementById("start-btn").addEventListener("click", toggleMapping);
         document.getElementById("refresh-devices-btn").addEventListener("click", function() {
             populateMappingSettings();
@@ -219,7 +199,7 @@
         createRestoreButton();
     }
 
-    // Create a small restore button that appears when the UI wrapper is hidden.
+    // Create a restore button.
     function createRestoreButton() {
         const restoreBtn = document.createElement('div');
         restoreBtn.id = 'restore-btn';
@@ -245,7 +225,6 @@
         });
     }
 
-    // Show the restore button when the UI wrapper is hidden.
     function showRestoreButton() {
         const restoreBtn = document.getElementById('restore-btn');
         if (restoreBtn) {
@@ -253,9 +232,9 @@
         }
     }
 
-    // Connect to Intiface via WebSocket and start scanning for devices.
+    // Connect to Intiface.
     async function connectToIntiface() {
-        const wsUrl = "ws://localhost:12345"; // fixed URL, ws/wss limitation
+        const wsUrl = "ws://localhost:12345";
         try {
             client = new Buttplug.ButtplugClient("The Ai Peeps Intiface Sync");
             const connector = new Buttplug.ButtplugBrowserWebsocketClientConnector(wsUrl);
@@ -294,7 +273,7 @@
         }
     }
 
-    // Check if the connection is still up. This function is called every 10 seconds.
+    // Check connection status periodically.
     function checkConnectionStatus() {
         try {
             if (client && typeof client.connected !== "undefined") {
@@ -319,9 +298,7 @@
         }
     }
 
-    // Populate the mapping settings based on the connected devices (up to 4).
-    // Each device gets a flex container row with its name and dropdown on one line,
-    // and underneath a slider (0–50) for oscillation.
+    // Populate mapping settings based on connected devices.
     function populateMappingSettings() {
         try {
             if (!client || !client.connected) {
@@ -342,22 +319,18 @@
             mappingSettingsDiv.innerHTML = "";
             for (let i = 0; i < devices.length; i++) {
                 const device = devices[i];
-                // Create a container for this device mapping.
                 const container = document.createElement("div");
                 container.style.marginTop = "10px";
                 container.style.borderBottom = "1px solid #555";
                 container.style.paddingBottom = "5px";
-                // Create a row for the device name and dropdown.
                 const row = document.createElement("div");
                 row.style.display = "flex";
                 row.style.alignItems = "center";
                 row.style.flexWrap = "wrap";
-                // Device name label.
                 const label = document.createElement("div");
                 label.innerText = device.name + ": ";
                 label.style.flex = "1";
                 label.style.whiteSpace = "nowrap";
-                // Dropdown for chat number mapping.
                 const select = document.createElement("select");
                 select.id = "mapping-device-" + i;
                 for (let j = 1; j <= devices.length; j++) {
@@ -372,7 +345,6 @@
                 row.appendChild(label);
                 row.appendChild(select);
                 container.appendChild(row);
-                // Create a row for the oscillation slider.
                 const sliderRow = document.createElement("div");
                 sliderRow.style.marginTop = "5px";
                 sliderRow.style.display = "flex";
@@ -380,7 +352,6 @@
                 const sliderLabel = document.createElement("div");
                 sliderLabel.innerText = "Osc:";
                 sliderLabel.style.marginRight = "5px";
-                // Slider input.
                 const slider = document.createElement("input");
                 slider.type = "range";
                 slider.min = "0";
@@ -388,14 +359,13 @@
                 slider.step = "1";
                 slider.value = "0";
                 slider.id = "osc-device-" + i;
-                // Display current slider value.
                 const sliderValue = document.createElement("span");
                 sliderValue.id = "osc-value-display-" + i;
                 sliderValue.innerText = "0%";
                 sliderValue.style.marginLeft = "5px";
                 slider.addEventListener("input", function() {
                     sliderValue.innerText = slider.value + "%";
-                    if(mappingStarted) {
+                    if (mappingStarted) {
                         mappingStarted = false;
                         const startBtn = document.getElementById("start-btn");
                         startBtn.innerText = "Restart";
@@ -415,7 +385,7 @@
         }
     }
 
-    // Called when the user clicks "Start" (or "Restart") after mapping is set.
+    // Start processing chat messages (mapping).
     function startMapping() {
         // Clear any existing oscillation timers.
         if (oscillationTimers && oscillationTimers.length > 0) {
@@ -453,7 +423,7 @@
         startBtn.style.fontWeight = "";
     }
 
-    // Stop processing chat messages and send a 0 command to every device.
+    // Stop processing messages and send a 0 command to every device.
     function stopMapping() {
         if (mappingProcessingInterval) {
             clearInterval(mappingProcessingInterval);
@@ -462,7 +432,6 @@
         mappingStarted = false;
         const startBtn = document.getElementById("start-btn");
         startBtn.innerText = "Start";
-        // Clear any oscillation timers and send 0 to every device.
         for (let i = 0; i < oscillationTimers.length; i++) {
             if (oscillationTimers[i]) {
                 clearInterval(oscillationTimers[i]);
@@ -475,7 +444,7 @@
                     sendVibrationCommandToDevice(client.devices[i], 0);
                 }
             }
-        } catch(e) {
+        } catch (e) {
             debugLog("Error sending stop command: " + e);
         }
     }
@@ -489,13 +458,14 @@
         }
     }
 
-    // Process chat messages, extract numbers, and send commands based on mapping.
+    // Updated checkMessages function that reconstructs the full message from split spans.
     function checkMessages() {
         if (!isConnected || !mappingStarted) return;
         let msgs;
         try {
-            msgs = document.querySelectorAll('.chat-window .msg-content.AI');
-        } catch(e) {
+            // Query for both full message containers and individual word elements with AI class.
+            msgs = document.querySelectorAll('.chat-window .msg-content.AI, .chat-window .word.AI');
+        } catch (e) {
             debugLog("Error accessing chat messages: " + e);
             return;
         }
@@ -504,8 +474,20 @@
             return;
         }
         let validMsg = null;
+        // Iterate backwards to find the most recent message that contains a number.
         for (let i = msgs.length - 1; i >= 0; i--) {
-            const text = msgs[i].textContent.trim();
+            let text = "";
+            if (msgs[i].classList.contains("msg-content")) {
+                text = msgs[i].textContent.trim();
+            } else if (msgs[i].classList.contains("word")) {
+                let parent = msgs[i].parentElement;
+                if (parent) {
+                    // Combine text from all child spans with class "word"
+                    let words = parent.querySelectorAll(".word.AI");
+                    words.forEach(word => { text += word.textContent; });
+                    text = text.trim();
+                }
+            }
             if (text.match(/\d+/)) {
                 validMsg = text;
                 break;
@@ -524,7 +506,7 @@
         document.getElementById("last-value").innerText = "Last Read: " + numberMatches.join(", ");
         for (let i = 0; i < mappingConfig.length; i++) {
             const mappingObj = mappingConfig[i];
-            const chatIndex = mappingObj.mapping - 1; // 0-based index
+            const chatIndex = mappingObj.mapping - 1;
             if (chatIndex < numberMatches.length) {
                 const newValue = parseInt(numberMatches[chatIndex], 10);
                 if (newValue !== lastSentValues[i]) {
@@ -563,7 +545,7 @@
         }
     }
 
-    // Sends a vibration command to a specific device.
+    // Send a vibration command to a device.
     async function sendVibrationCommandToDevice(device, vibValue) {
         if (!device || !device.vibrate) return;
         const intensity = Math.min(Math.max(vibValue / 100, 0), 1);
@@ -571,9 +553,24 @@
         debugLog(`Sent vibration: ${roundTo3(intensity)} to ${device.name}`);
     }
 
-    // Initialize help popup, UI, and start periodic connection status checks.
+    // Initialize help popup, UI, and start connection status checks.
     createHelpPanel();
     createUI();
     connectionCheckInterval = setInterval(checkConnectionStatus, 10000);
+
+    // Optionally, set up a MutationObserver for chat window updates.
+    setTimeout(() => {
+        const chatWindow = document.querySelector('.chat-window');
+        if (chatWindow) {
+            const observer = new MutationObserver((mutationsList) => {
+                debugLog("Mutation observed in chat window.");
+                checkMessages();
+            });
+            observer.observe(chatWindow, { childList: true, subtree: true });
+            debugLog("MutationObserver for chat window has been initialized.");
+        } else {
+            debugLog("Chat window not found for observer.");
+        }
+    }, 3000);
 
 })();
