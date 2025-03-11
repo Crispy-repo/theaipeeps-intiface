@@ -55,7 +55,7 @@ If you haven't already, install the [Tampermonkey extension](https://www.tamperm
 
 ### 3. Add the Userscript
 - Create a new userscript in Tampermonkey.
-- Copy and paste the contents of the script from this repository into the new userscript.
+- Copy and paste the contents of the script from this repository into the new userscript. [theaipeeps-buttplug.js](theaipeeps-buttplug.js)
 - Save the script.
 
 ## Usage
