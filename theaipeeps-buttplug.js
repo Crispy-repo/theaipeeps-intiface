@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         The Ai Peeps Intiface / Buttplug.IO Sync
 // @namespace    http://tampermonkey.net/
-// @version      1.3.1
-// @description  Controls vibration based on chat messages with UI. Supports devices with multiple motors and oscillation.
-// @author       Crispy-repo
+// @version      1.4
+// @description  Controls device commands based on chat messages with UI. Supports devices with multiple actuator types (Vibrate, Oscillate, Rotate, Linear).
+// @author       Crispy-repo (modified)
 // @match        https://www.theaipeeps.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=theaipeeps.com
 // @grant        none
@@ -17,8 +17,8 @@
     let client = null;
     let isConnected = false;
     let mappingStarted = false;
-    // mappingConfig holds one object per mapping row (each motor):
-    // { mapping: number, osc: number, device: deviceObj, motor: number, intensity: number }
+    // mappingConfig holds one object per mapping row (each actuator channel):
+    // { mapping: number, osc: number, device: deviceObj, motor: number, intensity: number, commandType: string }
     let mappingConfig = [];
     let lastSentValues = []; // holds last raw value per mapping row (0-100)
     // Oscillation arrays (per mapping row)
@@ -28,8 +28,6 @@
     // Intervals
     let mappingProcessingInterval = null;
     let connectionCheckInterval = null;
-    // Last aggregated command sent per device (Map from device object to array of intensities)
-    let lastDeviceCommands = new Map();
 
     // Helper: round to 3 decimals.
     function roundTo3(num) {
@@ -76,7 +74,7 @@
             <strong>Program Documentation</strong><br>
             This program connects to Intiface using the fixed URL <code>ws://localhost:12345</code> and scans for connected devices.<br><br>
             <em>Mapping Settings:</em><br>
-            - Use the dropdowns to assign which chat message number controls each motor of each device.<br>
+            - Use the dropdowns to assign which chat message number controls each actuator channel of each device.<br>
             - Under each mapping row, adjust the slider (0–50) to set an oscillation percentage (if desired). Only numbers from 0 to 100 are accepted.<br><br>
             <em>Connection:</em><br>
             - The toggle button shows a red dot with "Connect" when disconnected and a green dot with "Disconnect" when connected.<br><br>
@@ -290,7 +288,6 @@
                 oscillationTimers = [];
                 oscillationBases = [];
                 oscillationStartTime = [];
-                lastDeviceCommands = new Map();
             } catch (err) {
                 debugLog("Error disconnecting: " + err);
             }
@@ -331,25 +328,57 @@
         }
     }
 
-    // Update aggregated command for a given device.
-    function updateAggregatedCommandForDevice(device) {
-        let motorCount = 1;
-        if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
-            motorCount = device._deviceInfo.DeviceMessages.ScalarCmd.length;
+    // New helper: Update command for a given device and command type.
+    // This aggregates all mapping rows for that device and command type.
+    async function updateDeviceCommand(device, commandType) {
+        // Find all mapping rows for this device and command type.
+        let relevantConfigs = mappingConfig.filter(config =>
+            config.device === device &&
+            config.commandType.toLowerCase() === commandType.toLowerCase()
+        );
+        if (relevantConfigs.length === 0) return;
+
+        // Determine the channel indices for this command type on the device.
+        let cmdIndices = [];
+        if(device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
+            device._deviceInfo.DeviceMessages.ScalarCmd.forEach((cmd, idx) => {
+                if(cmd.ActuatorType && cmd.ActuatorType.toLowerCase() === commandType.toLowerCase()){
+                    cmdIndices.push(idx);
+                }
+            });
         }
-        let speeds = Array(motorCount).fill(0);
-        mappingConfig.forEach(config => {
-            if (config.device === device) {
-                speeds[config.motor] = config.intensity;
+        // Prepare an array with length equal to the number of channels for that command type.
+        let intensities = Array(cmdIndices.length).fill(0);
+        // For each relevant mapping row, place its intensity at the appropriate position.
+        relevantConfigs.forEach(config => {
+            let pos = cmdIndices.indexOf(config.motor);
+            if (pos >= 0) {
+                intensities[pos] = config.intensity;
             }
         });
-        if (!lastDeviceCommands.has(device) || !arraysEqual(lastDeviceCommands.get(device), speeds)) {
-            sendVibrationCommandToDevice(device, speeds);
-            lastDeviceCommands.set(device, speeds.slice());
+        // Send the appropriate command.
+        try {
+            if(commandType.toLowerCase() === "vibrate" && device.vibrate) {
+                await device.vibrate(intensities);
+                debugLog(`Sent vibrate command: ${JSON.stringify(intensities)} to ${device.name}`);
+            } else if(commandType.toLowerCase() === "oscillate" && device.oscillate) {
+                await device.oscillate(intensities);
+                debugLog(`Sent oscillate command: ${JSON.stringify(intensities)} to ${device.name}`);
+            } else if(commandType.toLowerCase() === "rotate" && device.rotate) {
+                await device.rotate(intensities);
+                debugLog(`Sent rotate command: ${JSON.stringify(intensities)} to ${device.name}`);
+            } else if(commandType.toLowerCase() === "linear" && device.linear) {
+                await device.linear(intensities);
+                debugLog(`Sent linear command: ${JSON.stringify(intensities)} to ${device.name}`);
+            } else {
+                debugLog(`Device ${device.name} does not support command type: ${commandType}`);
+            }
+        } catch (err) {
+            debugLog(`Error sending ${commandType} command to ${device.name}: ${err}`);
         }
     }
 
-    // Populate mapping settings for each device and each motor.
+    // Populate mapping settings for each device and each actuator channel.
     function populateMappingSettings() {
         try {
             if (!client || !client.connected) {
@@ -361,10 +390,11 @@
                 debugLog("No devices found. Ensure your toys are turned on and connected.");
                 return;
             }
-            if (devices.length > 4) {
-                devices = devices.slice(0, 4);
-            }
-            // Compute total mapping rows (motors) across all devices.
+            // No limit on devices; use all connected devices.
+            //if (devices.length > 4) {
+            //    devices = devices.slice(0, 4);
+            //}
+            // Compute total mapping rows (actuator channels) across all devices.
             let totalMappingCount = 0;
             let motorCounts = [];
             devices.forEach((device) => {
@@ -375,7 +405,7 @@
                 motorCounts.push(motorCount);
                 totalMappingCount += motorCount;
             });
-            debugLog("Total mapping rows (motors): " + totalMappingCount);
+            debugLog("Total mapping rows (actuator channels): " + totalMappingCount);
 
             const mappingSection = document.getElementById("mapping-section");
             mappingSection.style.display = "block";
@@ -384,7 +414,7 @@
             let globalMappingIndex = 0;
             devices.forEach((device, deviceIndex) => {
                 let motorCount = motorCounts[deviceIndex];
-                debugLog("Device: " + device.name + " reports " + motorCount + " vibration motor(s).");
+                debugLog("Device: " + device.name + " reports " + motorCount + " actuator channel(s).");
                 for (let m = 0; m < motorCount; m++) {
                     const container = document.createElement("div");
                     container.style.marginTop = "10px";
@@ -398,7 +428,15 @@
                     row.style.flexWrap = "wrap";
 
                     const label = document.createElement("div");
-                    label.innerText = `${device.name} (Motor ${m+1}): `;
+                    // Also display the actuator type (if available)
+                    let actuatorType = "Vibrate";
+                    if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
+                        let cmd = device._deviceInfo.DeviceMessages.ScalarCmd[m];
+                        if(cmd && cmd.ActuatorType) {
+                            actuatorType = cmd.ActuatorType;
+                        }
+                    }
+                    label.innerText = `${device.name} (Channel ${m+1} - ${actuatorType}): `;
                     label.style.flex = "1";
                     label.style.whiteSpace = "nowrap";
 
@@ -480,7 +518,6 @@
         oscillationTimers = [];
         oscillationBases = [];
         oscillationStartTime = [];
-        lastDeviceCommands = new Map();
 
         for (let i = 0; i < selects.length; i++) {
             const sel = selects[i];
@@ -489,12 +526,22 @@
             const oscValue = parseFloat(slider.value) || 0;
             const deviceIndex = parseInt(sel.dataset.deviceIndex, 10);
             const motorIndex = parseInt(sel.dataset.motorIndex, 10);
+            let deviceObj = client.devices[deviceIndex];
+            // Determine the command type for this channel based on device info.
+            let commandType = "vibrate"; // default
+            if (deviceObj._deviceInfo && deviceObj._deviceInfo.DeviceMessages && deviceObj._deviceInfo.DeviceMessages.ScalarCmd) {
+                let cmd = deviceObj._deviceInfo.DeviceMessages.ScalarCmd[motorIndex];
+                if(cmd && cmd.ActuatorType) {
+                    commandType = cmd.ActuatorType.toLowerCase();
+                }
+            }
             mappingConfig.push({
                 mapping: mappingValue,
                 osc: oscValue,
-                device: client.devices[deviceIndex],
+                device: deviceObj,
                 motor: motorIndex,
-                intensity: 0
+                intensity: 0,
+                commandType: commandType
             });
             lastSentValues.push(null);
             oscillationTimers.push(null);
@@ -502,7 +549,7 @@
             oscillationStartTime.push(null);
         }
         debugLog("Mapping configuration set: " + mappingConfig.map(obj =>
-            `(${obj.device.name} Motor ${obj.motor+1} -> Number ${obj.mapping}, ${obj.osc}%)`
+            `(${obj.device.name} Channel ${obj.motor+1} [${obj.commandType}] -> Number ${obj.mapping}, ${obj.osc}%)`
         ).join(", "));
         mappingStarted = true;
         mappingProcessingInterval = setInterval(checkMessages, 2000);
@@ -522,24 +569,53 @@
         mappingStarted = false;
         const startBtn = document.getElementById("start-btn");
         startBtn.innerText = "Start";
+        // Clear any ongoing oscillation timers.
         for (let i = 0; i < oscillationTimers.length; i++) {
             if (oscillationTimers[i]) {
                 clearInterval(oscillationTimers[i]);
                 oscillationTimers[i] = null;
             }
         }
-        try {
-            mappingConfig.forEach(config => {
-                let motorCount = 1;
-                if (config.device._deviceInfo && config.device._deviceInfo.DeviceMessages && config.device._deviceInfo.DeviceMessages.ScalarCmd) {
-                    motorCount = config.device._deviceInfo.DeviceMessages.ScalarCmd.length;
+        // Group mapping rows by device and command type to send only one stop command per group.
+        let deviceCmdMap = new Map();
+        mappingConfig.forEach(config => {
+            if (!deviceCmdMap.has(config.device)) {
+                deviceCmdMap.set(config.device, new Set());
+            }
+            deviceCmdMap.get(config.device).add(config.commandType);
+        });
+        // For each device and command type, build the correct zeros array and send the stop command.
+        deviceCmdMap.forEach((cmdSet, device) => {
+            cmdSet.forEach(async (cmdType) => {
+                // Determine channels for the given command type on the device.
+                let channels = [];
+                if (device._deviceInfo && device._deviceInfo.DeviceMessages && device._deviceInfo.DeviceMessages.ScalarCmd) {
+                    device._deviceInfo.DeviceMessages.ScalarCmd.forEach((cmd, idx) => {
+                        if (cmd.ActuatorType && cmd.ActuatorType.toLowerCase() === cmdType.toLowerCase()) {
+                            channels.push(idx);
+                        }
+                    });
                 }
-                let zeros = Array(motorCount).fill(0);
-                sendVibrationCommandToDevice(config.device, zeros);
+                // Create an array of zeros with the same length as the number of channels.
+                let zeros = Array(channels.length).fill(0);
+                try {
+                    if (cmdType.toLowerCase() === "vibrate" && device.vibrate) {
+                        await device.vibrate(zeros);
+                    } else if (cmdType.toLowerCase() === "oscillate" && device.oscillate) {
+                        await device.oscillate(zeros);
+                    } else if (cmdType.toLowerCase() === "rotate" && device.rotate) {
+                        await device.rotate(zeros);
+                    } else if (cmdType.toLowerCase() === "linear" && device.linear) {
+                        await device.linear(zeros);
+                    } else {
+                        debugLog(`Device ${device.name} does not support command type: ${cmdType}`);
+                    }
+                    debugLog(`Sent stop command for ${cmdType} with zeros: ${JSON.stringify(zeros)} to ${device.name}`);
+                } catch (err) {
+                    debugLog(`Error sending stop command for ${cmdType} to ${device.name}: ${err}`);
+                }
             });
-        } catch (e) {
-            debugLog("Error sending stop command: " + e);
-        }
+        });
     }
 
     // Toggle mapping.
@@ -614,6 +690,9 @@
         }
         document.getElementById("last-value").innerText = "Last Read: " + numberMatches.join(", ");
 
+        // To track which device and commandType need an update.
+        let deviceCmdMap = new Map();
+
         // For each mapping row, update its intensity based on the corresponding number.
         for (let i = 0; i < mappingConfig.length; i++) {
             const mappingObj = mappingConfig[i];
@@ -627,7 +706,11 @@
                         clearInterval(oscillationTimers[i]);
                         oscillationTimers[i] = null;
                     }
-                    updateAggregatedCommandForDevice(mappingObj.device);
+                    // Mark this device/commandType for update.
+                    if(!deviceCmdMap.has(mappingObj.device)) {
+                        deviceCmdMap.set(mappingObj.device, new Set());
+                    }
+                    deviceCmdMap.get(mappingObj.device).add(mappingObj.commandType);
                 } else {
                     if (mappingObj.osc > 0) {
                         if (!oscillationTimers[i]) {
@@ -640,7 +723,10 @@
                                 let oscillated = oscillationBases[i] + amplitude * Math.sin(2 * Math.PI * frequency * t);
                                 oscillated = Math.max(0, Math.min(1, oscillated));
                                 mappingObj.intensity = oscillated;
-                                updateAggregatedCommandForDevice(mappingObj.device);
+                                // Update immediately for this channel.
+                                (async () => {
+                                    await updateDeviceCommand(mappingObj.device, mappingObj.commandType);
+                                })();
                             }, 175);
                         }
                     } else {
@@ -654,27 +740,12 @@
                 debugLog(`Mapping row ${i+1}: No corresponding number found in the message.`);
             }
         }
-        // Update aggregated commands for devices not updated in this pass.
-        let updatedDevices = new Set();
-        mappingConfig.forEach(config => {
-            if (!updatedDevices.has(config.device)) {
-                updateAggregatedCommandForDevice(config.device);
-                updatedDevices.add(config.device);
-            }
+        // Now update each affected device/commandType.
+        deviceCmdMap.forEach((cmdSet, device) => {
+            cmdSet.forEach(cmdType => {
+                updateDeviceCommand(device, cmdType);
+            });
         });
-    }
-
-    // Send a vibration command.
-    async function sendVibrationCommandToDevice(device, vibValueOrArray) {
-        if (!device || !device.vibrate) return;
-        if (Array.isArray(vibValueOrArray)) {
-            await device.vibrate(vibValueOrArray);
-            debugLog(`Sent vibration array: ${JSON.stringify(vibValueOrArray)} to ${device.name}`);
-        } else {
-            const intensity = Math.min(Math.max(vibValueOrArray / 100, 0), 1);
-            await device.vibrate(intensity);
-            debugLog(`Sent vibration: ${roundTo3(intensity)} to ${device.name}`);
-        }
     }
 
     // Initialize help popup, UI, and connection status checks.
