@@ -89,7 +89,7 @@ If you haven't already, install the [Tampermonkey extension](https://www.tamperm
 
 8. **Preparing the Scenario:**  
    For the best experience, use something like this within your scenario to let the bot know what it should do:  
-   "Every message needs to start with a number from 0 to 100. With this number you can control my toy. 0 is off and 100 means full power."  
+   "Every message needs to contain a number from 0 to 100. With this number you can control my toy. 0 is off and 100 means full power."  
    You can also specify how many toys you have connected and their names/usage. Feel free to experiment.
 
 ## License
