@@ -2,7 +2,7 @@
 // @name         The Ai Peeps Intiface / Buttplug.IO Sync TESTING
 // @namespace    http://tampermonkey.net/
 // @version      0.1
-// @description  Controls vibration based on chat messages with UI. Supports splitting commands per actuator type (Vibrate, Oscillate, Rotate, Linear).
+// @description  Controls vibration based on chat messages with UI. Supports splitting commands per actuator type (Vibrate, Oscillate, Rotate, Linear, Constrict).
 // @author       Crispy-repo
 // @match        https://www.theaipeeps.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=theaipeeps.com
@@ -79,6 +79,7 @@
             <em>Chat Processing:</em><br>
             - The script reconstructs AI messages from split spans so that numbers spread across elements are captured.<br>
             - Use the checkbox below to limit matching to numbers preceded by "v" (e.g., v34).<br><br>
+            <em>Supported actuator types:</em> Vibrate, Oscillate, Rotate, Linear, <b>Constrict</b>.<br><br>
             Click the "?" button again to close this help.
         `;
         document.body.appendChild(helpPanel);
@@ -528,21 +529,12 @@
                     await device.rotate(speeds);
                 } else if (type === "linear" && typeof device.linear === "function") {
                     await device.linear(speeds);
-                } else {
-                    // Fallback: send a ScalarCmd message.
-                    let scalars = indices.map(idx => ({
-                        Index: idx,
-                        Speed: speeds[idx]
-                    }));
-                    let message = {
-                        ScalarCmd: {
-                            DeviceIndex: deviceIndex,
-                            Id: getNextMessageId(),
-                            Scalars: scalars
-                        }
-                    };
-                    debugLog("Fallback: Sending ScalarCmd message: " + JSON.stringify(message));
-                    await client.sendDeviceMessage(message);
+                } else if (type === "constrict" && (typeof device.constrict === "function" || typeof device.vibrate === "function")) {
+                    if (typeof device.constrict === "function") {
+                        await device.constrict(speeds);
+                    } else if (typeof device.vibrate === "function") {
+                        await device.vibrate(speeds);
+                    }
                 }
                 debugLog(`Sent command for device ${device._deviceInfo.DeviceName} actuator type ${type} with speeds: ${JSON.stringify(speeds)}`);
             } catch (err) {
@@ -562,7 +554,7 @@
             debugLog("Error accessing chat messages: " + e);
             return;
         }
-        if (!msgs || msgs.length === 0) {
+        if (!msgs || !msgs.length === 0) {
             debugLog("No messages found.");
             return;
         }
@@ -598,6 +590,7 @@
 
         // NEW SECTION - Phrase Based Intensity Mapping (Start)
         const usePhraseSystem = document.getElementById("use-phrase-system") ? document.getElementById("use-phrase-system").checked : false;
+        let valuesChanged = false;
 
         if (usePhraseSystem) {
             debugLog(`phrasemsg: ${phraseMsg}`);
@@ -633,8 +626,11 @@
                 // Update mappingConfig based on the detected intensity level
                 for (let i = 0; i < mappingConfig.length; i++) {
                     const mappingObj = mappingConfig[i];
-                    mappingObj.intensity = intensityValue;
-                    lastSentValues[i] = intensityValue * 100; // Store as percentage for consistency
+                    if (mappingObj.intensity !== intensityValue) {
+                        valuesChanged = true;
+                        mappingObj.intensity = intensityValue;
+                        lastSentValues[i] = intensityValue * 100; // Store as percentage for consistency
+                    }
 
                     // Oscillation logic (same as before)
                     if (mappingObj.osc > 0) {
@@ -708,6 +704,7 @@ document.getElementById("last-value").innerText = "Last Read: " + numberMatches.
                 if (chatIndex < numberMatches.length) {
                     const newValue = parseInt(numberMatches[chatIndex], 10);
                     if (newValue !== lastSentValues[i]) {
+                        valuesChanged = true;
                         lastSentValues[i] = newValue;
                         mappingObj.intensity = newValue / 100;
                     } else {
@@ -745,13 +742,15 @@ document.getElementById("last-value").innerText = "Last Read: " + numberMatches.
 
 
         // For each unique device referenced in mappingConfig, send commands.
-        let uniqueDeviceIndices = [...new Set(mappingConfig.map(cfg => cfg.deviceIndex))];
-        uniqueDeviceIndices.forEach(async (deviceIndex) => {
-            let device = getDeviceByDeviceIndex(deviceIndex);
-            if (device) {
-                await sendCommandsForDevice(device);
-            }
-        });
+        if (valuesChanged) {
+            let uniqueDeviceIndices = [...new Set(mappingConfig.map(cfg => cfg.deviceIndex))];
+            uniqueDeviceIndices.forEach(async (deviceIndex) => {
+                let device = getDeviceByDeviceIndex(deviceIndex);
+                if (device) {
+                    await sendCommandsForDevice(device);
+                }
+            });
+        }
 
     }
 
@@ -855,20 +854,12 @@ document.getElementById("last-value").innerText = "Last Read: " + numberMatches.
                             await device.rotate(speeds);
                         } else if (type === "linear" && typeof device.linear === "function") {
                             await device.linear(speeds);
-                        } else {
-                            // Fallback: send a ScalarCmd message.
-                            let scalars = indices.map(idx => ({
-                                Index: idx,
-                                Speed: 0
-                            }));
-                            let message = {
-                                ScalarCmd: {
-                                    DeviceIndex: device._deviceInfo.DeviceIndex,
-                                    Id: getNextMessageId(),
-                                    Scalars: scalars
-                                }
-                            };
-                            await client.sendDeviceMessage(message);
+                        } else if (type === "constrict" && (typeof device.constrict === "function" || typeof device.vibrate === "function")) {
+                            if (typeof device.constrict === "function") {
+                                await device.constrict(speeds);
+                            } else if (typeof device.vibrate === "function") {
+                                await device.vibrate(speeds);
+                            }
                         }
                     }
                     debugLog(`Stopped device ${device._deviceInfo.DeviceName}.`);
@@ -888,23 +879,6 @@ document.getElementById("last-value").innerText = "Last Read: " + numberMatches.
         }
         const actuatorType = device._deviceInfo.DeviceMessages.ScalarCmd[actuatorIndex].ActuatorType.toLowerCase();
         debugLog(`updateCommandForDeviceActuator: Device ${device._deviceInfo.DeviceName} (Index: ${device._deviceInfo.DeviceIndex}) actuator ${actuatorIndex} (${actuatorType}) intensity: ${intensity}`);
-        try {
-            let message = {
-                ScalarCmd: {
-                    DeviceIndex: device._deviceInfo.DeviceIndex,
-                    Id: getNextMessageId(),
-                    Scalars: [{
-                        Index: actuatorIndex,
-                        Speed: intensity
-                    }]
-                }
-            };
-            debugLog("Fallback: Sending ScalarCmd message: " + JSON.stringify(message));
-            await client.sendDeviceMessage(message);
-            debugLog(`updateCommandForDeviceActuator: Command sent to ${device._deviceInfo.DeviceName} actuator ${actuatorIndex}`);
-        } catch (err) {
-            debugLog(`Error in updateCommandForDeviceActuator for device ${device._deviceInfo.DeviceName} actuator ${actuatorIndex}: ${err}`);
-        }
     }
 
 
