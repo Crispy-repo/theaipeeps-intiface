@@ -4,7 +4,7 @@
 // @version      1.1.9
 // @description  Controls vibration based on chat messages with UI. Supports splitting commands per actuator type (Vibrate, Oscillate, Rotate, Linear).
 // @author       Crispy-repo
-// @match        https://www.theaipeeps.com/*
+// @match        https://*.aipeeps.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=theaipeeps.com
 // @grant        none
 // @require      https://cdn.jsdelivr.net/npm/buttplug@3.0.0/dist/web/buttplug.min.js
